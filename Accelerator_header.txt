@@ -1,0 +1,7 @@
+#include <ap_int.h>
+#include <ap_fixed.h>
+#include <hls_stream.h>
+#include <hls_vector.h>
+
+void test1(const float* conv2d_input_1, const float* conv2d_input_2, int width, int height,
+                   int in_channels, int out_channels, int ksize, float* conv2d_output,int stride);

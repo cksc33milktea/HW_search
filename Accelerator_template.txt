@@ -1,0 +1,518 @@
+#include "test.h"
+#include <iostream>
+using namespace std;
+
+#define UNROLL_X 4
+
+#define Tr Tr_plug
+#define Tc Tc_plug
+#define Tn Tn_plug
+#define Tm Tm_plug
+#define Ntime Ntime_plug / Tn
+
+#define H   14
+#define W   14
+#define ICH 16
+#define OCH 16
+#define K 3
+
+#define BASE 100000
+
+
+typedef ap_fixed<27,5> fix;
+//typedef float fix;
+
+
+void load_input(const float* conv2d_input_1, int ti, int idx_n, int row, int idx_r, int col, int idx_c, int R, int C, int M, int N,
+			fix input_1 [Ntime/2][Tn][Tr+K-1][Tc+K-1], int to, int ksize){
+
+	if(to!=0)return;
+
+	if(ti>=N)return;
+
+	/*for(int tii=0; tii<Tn; tii++){
+		for(int trr=0; trr<Tr+K-1; trr++){
+			for(int tcc=0; tcc<Tc+K-1; tcc++){
+				#pragma HLS PIPELINE II=1
+
+				int ph = trr +row- K/2;
+				int pw = tcc +col- K/2;
+
+				fix tmp;
+
+				if(tii>=idx_n||trr>=idx_r+K-1||tcc>=idx_c+K-1)tmp=0;
+				else if (ph < 0 || ph >= R || pw < 0 || pw >= C)tmp=0;
+				else tmp=*(conv2d_input_1+((tii+ti)*R*C+ph*C+pw));
+
+
+
+				input_1[ti/Tn][tii][trr][tcc]=tmp;
+
+			}
+		}
+	}*/
+	for(int tii=0; tii<Tn; tii++){
+		for(int trr=0; trr<Tr+ksize-1; trr++){
+			for(int tcc=0; tcc<Tc+ksize-1; tcc++){
+				#pragma HLS PIPELINE II=1
+
+				int ph = trr +row- ksize/2;
+				int pw = tcc +col- ksize/2;
+
+				fix tmp;
+
+
+				tmp=*(conv2d_input_1+((tii+ti)*R*C+ph*C+pw+BASE));
+
+
+
+				if (ph < 0 || ph >= R || pw < 0 || pw >= C)input_1[ti/(2*Tn)][tii][trr][tcc]=0;
+				else input_1[ti/(2*Tn)][tii][trr][tcc]=tmp;
+
+			}
+		}
+	}
+
+	return;
+}
+/*
+void load_kernel(const float* conv2d_input_2, int to, int idx_m, int ti, int idx_n, int R, int C, int M, int N, fix kernel_1[Tm][Tn][K][K]){
+
+	for(int too=0; too<Tm; too++){
+		for(int tii=0; tii<Tn; tii++){
+			for(int i =0; i<K; i++){
+				for(int j =0; j<K; j++){
+					#pragma HLS PIPELINE II=1
+					fix tmp;
+					//if(too<idx_m&&tii<idx_n){
+						tmp=*(conv2d_input_2+((too+to)*N*K*K+(tii+ti)*K*K+i*K+j));
+						kernel_1[too][tii][i][j]=tmp;
+					//}
+				}
+			}
+		}
+	}
+
+	return;
+}*/
+void load_kernel(const float* conv2d_input_2, int to, int idx_m, int ti, int idx_n, int R, int C, int M, int N,
+				fix kernel_1[Tm][Tn][K][K], int ksize){
+
+	if(ti>=N)return;
+
+	for(int too=0; too<Tm; too++){
+		for(int idx=0; idx<Tn*ksize*ksize; idx++){
+			//for(int i =0; i<K; i++){
+				//for(int j =0; j<K; j++){
+					#pragma HLS PIPELINE II=1
+					fix tmp;
+
+					int tii=idx/(ksize*ksize);
+					int temp=idx%(ksize*ksize);
+					int i=temp/ksize;
+					int j=temp%ksize;
+					//if(too<idx_m&&tii<idx_n){
+						tmp=*(conv2d_input_2+((too+to)*N*ksize*ksize+ti*ksize*ksize+idx));
+
+						if(ti%2==1)kernel_1[too][tii][i][j]=0;
+						else kernel_1[too][tii][i][j]=tmp;
+					//}
+				//}
+			//}
+		}
+	}
+
+	return;
+}
+/*
+void load_output(float* conv2d_output, int to, int idx_m, int row, int idx_r, int col, int idx_c, int R, int C, int M, int N, fix output_1[Tm][Tr][Tc]){
+
+	for(int too=0; too<Tm; too++){
+		for(int trr=0; trr<Tr; trr++){
+			for(int tcc=0; tcc<Tc; tcc++){
+				#pragma HLS PIPELINE II=1
+				fix tmp;
+				if(too<idx_m&&trr<idx_r&&tcc<idx_c){
+					tmp=*(conv2d_output+((too+to)*R*C+(trr+row)*C+tcc+col));
+					output_1[too][trr][tcc]=tmp;
+				}
+			}
+		}
+	}
+
+	return;
+}
+*/
+/*
+void clean_output(float* conv2d_output, int to, int idx_m, int row, int idx_r, int col, int idx_c, int R, int C, int M, int N, fix output_1[Tm][Tr][Tc]){
+
+	for(int too=0; too<Tm; too++){
+		for(int trr=0; trr<Tr; trr++){
+			for(int tcc=0; tcc<Tc; tcc++){
+				#pragma HLS PIPELINE II=1
+				output_1[too][trr][tcc]=0;
+
+			}
+		}
+	}
+
+	return;
+}
+*/
+void compute(int idx_r, int idx_c, int idx_m, int idx_n, fix output_1[Tm][Tr][Tc], fix kernel_1[Tm][Tn][K][K], fix input_1 [Ntime/2][Tn][Tr+K-1][Tc+K-1],
+			int ti, hls::stream<fix>* out_fifo, int last, int ksize){
+
+
+	if(ti==0)return;
+
+	fix temp1[Tm][Tn];
+	fix temp[Tm];
+	fix temp_r[Tm];
+
+	fix input_buf;
+	fix kernel_buf [Tm];
+
+	for(int trr=0; trr<Tr; trr++){
+
+		for(int i =0; i<ksize; i++){
+			for(int j =0; j<ksize; j++){
+
+
+				for(int tcc=0; tcc<Tc; tcc++){
+					#pragma HLS PIPELINE II=1
+
+
+					/*for(int tii=0; tii<Tn; tii++){//unroll
+						#pragma HLS UNROLL
+						for(int too=0; too<Tm; too++){//unroll
+							#pragma HLS UNROLL
+							if(tii<idx_n&&too<idx_m&&trr<idx_r&&tcc<idx_c){
+								temp1[too][tii]=kernel_1[too][tii][i][j]*input_1[(ti-Tn)/(2*Tn)][tii][trr+i][tcc+j];
+							}
+							else{
+								temp1[too][tii]=0;
+							}
+						}
+					}*/
+
+					for(int too=0; too<Tm; too++){//unroll
+						#pragma HLS UNROLL
+						temp_r[too]=temp[too];
+					}
+
+					for(int tii=0; tii<Tn; tii++){//unroll
+						#pragma HLS UNROLL
+
+						input_buf=input_1[(ti-Tn)/(2*Tn)][tii][trr+i][tcc+j];
+
+						for(int too=0; too<Tm; too++){//unroll
+							#pragma HLS UNROLL
+							if(tii<idx_n&&too<idx_m&&trr<idx_r&&tcc<idx_c){
+								kernel_buf[too]=kernel_1[too][tii][i][j];
+							}
+							else{
+								kernel_buf[too]=0;
+							}
+						}
+
+
+						for(int too=0; too<Tm; too++){//unroll
+							#pragma HLS UNROLL
+							if(tii<idx_n&&too<idx_m&&trr<idx_r&&tcc<idx_c){
+								temp1[too][tii]=kernel_buf[too]*input_buf;
+							}
+							else{
+								temp1[too][tii]=0;
+							}
+						}
+					}
+
+					for(int too=0; too<Tm; too++){//unroll
+						temp[too]=0;
+						for(int tii=0; tii<Tn; tii++){//unroll
+							#pragma HLS UNROLL
+							temp[too]+=temp1[too][tii];
+
+						}
+						if(i==0&&j==0&&ti==Tn){
+							temp[too]=temp[too];
+						}
+						else{
+							temp[too]+=output_1[too][trr][tcc];
+						}
+
+					}
+					for(int too=0; too<Tm; too++){//unroll
+						#pragma HLS UNROLL
+						if(too<idx_m&&trr<idx_r&&tcc<idx_c)output_1[too][trr][tcc]=temp[too];
+
+						if(too<idx_m&&trr<idx_r&&tcc<idx_c&&i==ksize-1&&j==ksize-1&&last==1)out_fifo[too]<<temp[too];
+					}
+
+				}
+			}
+
+
+		}
+	}
+
+
+}
+
+/*
+void store_output(float* conv2d_output, int to, int idx_m, int row, int idx_r, int col, int idx_c, int R, int C, int M, int N, fix output_1[Tm][Tr][Tc], hls::stream<fix>* out_fifo, int last){
+
+	if(last==0)return;
+
+		for(int trr=0; trr<Tr; trr++){
+
+			int base1=to;
+			for(int too=0; too<Tm; too++){
+
+				int base=col;
+				for(int tcc=0; tcc<Tc; tcc++){
+					#pragma HLS PIPELINE II=1
+					fix tmp;
+					//if(too>=idx_m||trr>=idx_r||tcc>=idx_c)
+					if(too>=idx_m)
+						continue;
+
+					out_fifo[too]>>tmp;
+					*(conv2d_output+(base1*R*C+(trr+row)*C+base))=(float)tmp;
+
+					base++;
+
+				}
+				base1++;
+			}
+		}
+
+	return;
+}*/
+void store_output(float* conv2d_output, int to, int idx_m, int row, int idx_r, int col, int idx_c, int R, int C, int M, int N, fix output_1[Tm][Tr][Tc], hls::stream<fix>* out_fifo, int last){
+
+	if(last==0)return;
+
+		int base1=row;
+
+		for(int trr=0; trr<Tr; trr++){
+
+			int base2=to;
+
+			for(int too=0; too<Tm; too++){
+
+				for(int tcc=0; tcc<Tc; tcc++){
+					#pragma HLS PIPELINE II=1
+					fix tmp;
+					//if(too>=idx_m||trr>=idx_r||tcc>=idx_c)
+					if(too>=idx_m)
+						continue;
+
+
+					out_fifo[too]>>tmp;
+					*(conv2d_output+(base2*R*C+base1*C+tcc+col))=(float)tmp;
+
+
+
+				}
+
+				base2++;
+			}
+
+			base1++;
+
+		}
+
+	return;
+}
+
+
+
+void load_compute(int R, int C, int M, int N , const float* conv2d_input_1, const float* conv2d_input_2,
+				fix output_1[Tm][Tr][Tc], fix kernel_1[Tm][Tn][K][K], fix input_1 [Ntime/2][Tn][Tr+K-1][Tc+K-1],
+				fix output_2[Tm][Tr][Tc], fix kernel_2[Tm][Tn][K][K], fix input_2 [Ntime/2][Tn][Tr+K-1][Tc+K-1],
+				hls::stream<fix>* out_fifo, int ksize){
+
+	int i,j,k,l;
+
+
+	int idx_m;
+	int idx_n;
+	int idx_r;
+	int idx_c;
+
+	int idx_m_r;
+	int idx_n_r;
+	int idx_r_r;
+	int idx_c_r;
+
+	int last;
+
+	int pp=0;
+
+	for(int row=0; row<R; row+=Tr){
+		for(int col =0; col<C; col+=Tc){
+			for(int to=0; to<M; to+=Tm){
+
+				//clean_output(conv2d_output,to,idx_m,row,idx_r,col,idx_c,R,C,M,N,output_1);
+
+				pp=0;
+
+				for(int ti =0; ti <N+Tn; ti+=Tn){
+				//==============================================================================
+
+
+					idx_r=(row+Tr<R)?row+Tr-row:R-row;
+					idx_c=(col+Tc<C)?col+Tc-col:C-col;
+					idx_m=(to+Tm<M)?to+Tm-to:M-to;
+					idx_n=(ti+Tn<N)?ti+Tn-ti:N-ti;
+
+					last=0;
+					if(ti+Tn>=N+Tn)last=1;
+
+
+
+					if(pp==0){
+						load_kernel(conv2d_input_2,to,idx_m,ti,idx_n,R,C,M,N,kernel_1,ksize);
+
+						load_input(conv2d_input_1,ti,idx_n,row,idx_r,col,idx_c,R,C,M,N,input_1,to,ksize);
+
+						compute(idx_r_r,idx_c_r,idx_m_r,idx_n_r,output_1,kernel_2,input_2,ti,out_fifo,last,ksize);
+					}
+					else if(pp==1){
+						load_kernel(conv2d_input_2,to,idx_m,ti,idx_n,R,C,M,N,kernel_2,ksize);
+
+						load_input(conv2d_input_1,ti,idx_n,row,idx_r,col,idx_c,R,C,M,N,input_2,to,ksize);
+
+						compute(idx_r_r,idx_c_r,idx_m_r,idx_n_r,output_1,kernel_1,input_1,ti,out_fifo,last,ksize);
+					}
+
+					idx_m_r=idx_m;
+					idx_n_r=idx_n;
+					idx_r_r=idx_r;
+					idx_c_r=idx_c;
+
+
+					pp=1-pp;
+				}
+
+
+			}
+		}
+	}
+
+	return ;
+}
+
+
+void store(int R, int C, int M, int N , float* conv2d_output, fix output_1[Tm][Tr][Tc], hls::stream<fix>* out_fifo){
+
+	int i,j,k,l;
+
+
+	int idx_m;
+	int idx_n;
+	int idx_r;
+	int idx_c;
+
+	int last;
+
+	int pp=0;
+
+	for(int row=0; row<R; row+=Tr){
+		for(int col =0; col<C; col+=Tc){
+			for(int to=0; to<M; to+=Tm){
+
+				//clean_output(conv2d_output,to,idx_m,row,idx_r,col,idx_c,R,C,M,N,output_1);
+
+				for(int ti =0; ti <N+Tn; ti+=Tn){
+				//==============================================================================
+
+
+					idx_r=(row+Tr<R)?row+Tr-row:R-row;
+					idx_c=(col+Tc<C)?col+Tc-col:C-col;
+					idx_m=(to+Tm<M)?to+Tm-to:M-to;
+					idx_n=(ti+Tn<N)?ti+Tn-ti:N-ti;
+
+					last=0;
+					if(ti+Tn>=N+Tn)last=1;
+
+					store_output(conv2d_output,to,idx_m,row,idx_r,col,idx_c,R,C,M,N,output_1,out_fifo,last);
+
+
+
+					pp=1-pp;
+				}
+
+
+			}
+		}
+	}
+
+	return ;
+}
+
+void test1(const float* conv2d_input_1, const float* conv2d_input_2, int width, int height,
+        int in_channels, int out_channels, int ksize, float* conv2d_output,int stride) {
+
+#pragma HLS INTERFACE s_axilite port=width
+#pragma HLS INTERFACE s_axilite port=height
+#pragma HLS INTERFACE s_axilite port=in_channels
+#pragma HLS INTERFACE s_axilite port=out_channels
+#pragma HLS INTERFACE s_axilite port=ksize
+#pragma HLS INTERFACE s_axilite port=stride
+#pragma HLS INTERFACE m_axi depth=3*224*224+2*100000 port=conv2d_input_1 offset=slave bundle=INPUT1 latency=10
+#pragma HLS INTERFACE m_axi depth=63*3*3*3+2*100000 port=conv2d_input_2 offset=slave bundle=INPUT2 latency=10
+#pragma HLS INTERFACE m_axi depth=64*224*224 port=conv2d_output offset=slave bundle=OUTPUT latency=10
+#pragma HLS INTERFACE s_axilite register port=return
+
+#pragma HLS DATAFLOW
+
+	int R=height;
+	int C=width;
+	int M=out_channels;
+	int N=in_channels;
+
+	fix input_1   [Ntime/2][Tn][Tr+K-1][Tc+K-1];
+	fix kernel_1  [Tm][Tn][K][K];
+	fix output_1  [Tm][Tr][Tc];
+	fix input_2   [Ntime/2][Tn][Tr+K-1][Tc+K-1];
+	fix kernel_2  [Tm][Tn][K][K];
+	fix output_2  [Tm][Tr][Tc];
+
+	hls::stream<fix,Tr*Tc> out_fifo[Tm];
+
+#pragma HLS BIND_STORAGE variable=input_1 type=ram_s2p impl=BRAM
+//#pragma HLS BIND_STORAGE variable=kernel_1 type=ram_s2p impl=BRAM
+#pragma HLS BIND_STORAGE variable=output_1 type=ram_s2p impl=BRAM
+#pragma HLS BIND_STORAGE variable=input_2 type=ram_s2p impl=BRAM
+//#pragma HLS BIND_STORAGE variable=kernel_2 type=ram_s2p impl=BRAM
+#pragma HLS BIND_STORAGE variable=output_2 type=ram_s2p impl=BRAM
+
+
+//#pragma HLS ARRAY_PARTITION variable=input_1 complete
+//#pragma HLS ARRAY_PARTITION variable=output_1 complete
+//#pragma HLS ARRAY_PARTITION variable=kernel_1 complete
+
+
+	load_compute(R, C, M, N, conv2d_input_1, conv2d_input_2, output_1, kernel_1, input_1, output_2, kernel_2, input_2, out_fifo, ksize);
+	store(R, C, M, N, conv2d_output, output_1, out_fifo);
+
+	return ;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
